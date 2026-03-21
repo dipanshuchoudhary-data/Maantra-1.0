@@ -27,6 +27,7 @@ Memory Update
 """
 
 import json
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 
@@ -38,14 +39,47 @@ from src.memory.database import (
     add_message,
 )
 
-from src.rag.retriever import retrieve
+from src.rag.retriever import retrieve, RetrievalOptions
 
 from src.tools.slack_actions import send_message, list_channels
-from src.tools.scheduler import task_scheduler
+from src.tools.scheduler import (
+    task_scheduler,
+    parse_relative_time,
+    to_cron_expression,
+)
 
 from src.llm.provider_factory import get_llm_provider
 
+# MCP tools
+from src.mcp import (
+    get_all_mcp_tools,
+    execute_mcp_tool,
+    parse_tool_name,
+    format_mcp_result,
+    mcp_tools_to_openai,
+)
+
 logger = get_logger("agent")
+
+
+def _has_usable_openai_key() -> bool:
+
+    api_key = settings.ai.openai_api_key
+
+    if not api_key:
+        return False
+
+    lowered = api_key.strip().lower()
+
+    placeholders = {
+        "",
+        "sk-xxxxxxxx",
+        "your_openai_api_key",
+        "replace_me",
+        "changeme",
+    }
+
+    return lowered not in placeholders
 
 
 # ------------------------------------------------------------------
@@ -126,7 +160,7 @@ class Agent:
         user_id: str,
     ) -> tuple[str, int]:
 
-        if not settings.memory_enabled:
+        if not settings.memory.enabled:
             return "", 0
 
         try:
@@ -161,25 +195,30 @@ class Agent:
 
     async def _retrieve_rag(self, query: str) -> tuple[str, int]:
 
-        if not settings.rag_enabled:
+        if not settings.rag.enabled:
+            return "", 0
+
+        if not _has_usable_openai_key():
             return "", 0
 
         try:
 
-            results = await retrieve(
+            response = await retrieve(
                 query=query,
-                limit=settings.rag_max_results,
-                min_score=settings.rag_min_similarity,
+                options=RetrievalOptions(
+                    limit=settings.rag.max_results,
+                    min_score=settings.rag.min_similarity,
+                )
             )
 
-            if not results:
+            if not response.results:
                 return "", 0
 
-            context_chunks = [r["text"] for r in results]
+            context_chunks = [r.text for r in response.results]
 
             context = "\n\n".join(context_chunks)
 
-            return context, len(results)
+            return context, len(response.results)
 
         except Exception as e:
 
@@ -230,8 +269,8 @@ class Agent:
 
             messages.append(
                 {
-                    "role": msg.role,
-                    "content": msg.content,
+                    "role": msg["role"],
+                    "content": msg["content"],
                 }
             )
 
@@ -263,6 +302,7 @@ class Agent:
         )
 
         assistant_message = response["message"]
+        assistant_message["tool_calls"] = response.get("tool_calls", [])
 
         while assistant_message.get("tool_calls"):
 
@@ -314,6 +354,7 @@ class Agent:
             )
 
             assistant_message = response["message"]
+            assistant_message["tool_calls"] = response.get("tool_calls", [])
 
         return assistant_message
 
@@ -392,7 +433,7 @@ class Agent:
         # STORE MEMORY
         # --------------------------------------------------------------
 
-        if settings.memory_enabled:
+        if settings.memory.enabled:
 
             try:
 
@@ -427,8 +468,159 @@ class Agent:
 
 
 # ------------------------------------------------------------------
-# THREAD SUMMARIZATION
+# TOOL EXECUTION
 # ------------------------------------------------------------------
+
+async def execute_tool(
+    name: str,
+    args: dict,
+    context: AgentContext,
+) -> str:
+    """Execute a tool by name and return the result as a string."""
+    
+    logger.info(f"Executing tool: {name} with args: {args}")
+    
+    # Try to execute as MCP tool first
+    parsed = parse_tool_name(name)
+    
+    if parsed:
+        try:
+            result = await execute_mcp_tool(
+                server_name=parsed["serverName"],
+                tool_name=parsed["toolName"],
+                args=args,
+            )
+            
+            formatted = format_mcp_result(result)
+            
+            logger.info(f"MCP tool succeeded: {formatted[:100]}")
+            
+            return formatted
+            
+        except Exception as e:
+            logger.error(f"MCP tool failed: {e}")
+            raise
+    
+    # Local tools
+    if name == "send_message":
+        result = await send_message(
+            target=args.get("target"),
+            message=args.get("message"),
+        )
+        return str(result)
+    
+    if name == "list_channels":
+        channels = await list_channels()
+        return "\n".join([f"#{c.name}" for c in channels])
+    
+    if name == "schedule_task":
+        scheduled_time = args.get("scheduled_time")
+        cron_expression = args.get("cron_expression")
+
+        if isinstance(scheduled_time, str):
+            parsed_relative_time = parse_relative_time(scheduled_time)
+
+            if parsed_relative_time:
+                scheduled_time = parsed_relative_time
+            else:
+                try:
+                    scheduled_time = datetime.fromisoformat(scheduled_time)
+                except ValueError:
+                    scheduled_time = None
+
+        if not cron_expression and isinstance(args.get("description"), str):
+            cron_expression = to_cron_expression(args["description"])
+
+        task = await task_scheduler.schedule_task(
+            user_id=context.user_id,
+            channel_id=context.channel_id,
+            description=args.get("description"),
+            scheduled_time=scheduled_time,
+            cron_expression=cron_expression,
+            thread_ts=context.thread_ts,
+        )
+        return f"Task scheduled: {task}"
+    
+    raise ValueError(f"Unknown tool: {name}")
+
+
+def get_all_tools():
+    """Get all available tools for the agent."""
+    
+    tools = []
+    
+    # Local tools
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "send_message",
+            "description": "Send a message to a Slack channel or user",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target": {
+                        "type": "string",
+                        "description": "Channel ID, channel name (with #), or user ID"
+                    },
+                    "message": {
+                        "type": "string",
+                        "description": "Message text to send"
+                    }
+                },
+                "required": ["target", "message"]
+            }
+        }
+    })
+    
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "list_channels",
+            "description": "List all Slack channels the bot is a member of",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    })
+    
+    tools.append({
+        "type": "function",
+        "function": {
+            "name": "schedule_task",
+            "description": "Schedule a task or reminder",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "What to remind about"
+                    },
+                    "scheduled_time": {
+                        "type": "string",
+                        "description": "When to execute (ISO format or relative like 'in 5 minutes')"
+                    },
+                    "cron_expression": {
+                        "type": "string",
+                        "description": "Recurring schedule (cron format, optional)"
+                    }
+                },
+                "required": ["description"]
+            }
+        }
+    })
+    
+    # MCP tools
+    try:
+        mcp_tools = get_all_mcp_tools()
+        tools.extend(mcp_tools_to_openai(mcp_tools))
+        logger.info(f"Added {len(mcp_tools)} MCP tools")
+    except Exception as e:
+        logger.warning(f"Failed to load MCP tools: {e}")
+    
+    return tools
+
+
 
 
 async def summarize_thread(messages, context: AgentContext) -> str:
@@ -437,7 +629,8 @@ async def summarize_thread(messages, context: AgentContext) -> str:
         return "No messages to summarize."
 
     conversation = "\n\n".join(
-        f"[{m.role}] {m.content}" for m in messages
+        f"[{m.get('role', 'user')}] {m.get('text') or m.get('content', '')}"
+        for m in messages
     )
 
     prompt = f"""
