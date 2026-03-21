@@ -112,7 +112,7 @@ async def run_index():
 
     channels = await list_channels()
 
-    member_channels = [c for c in channels if c["isMember"]]
+    member_channels = [c for c in channels if c.is_member]
 
     logger.info(f"Indexing {len(member_channels)} channels")
 
@@ -121,8 +121,8 @@ async def run_index():
         try:
 
             result = await index_channel(
-                channel["id"],
-                channel["name"],
+                channel.id,
+                channel.name,
             )
 
             total_indexed += result["indexed"]
@@ -137,7 +137,7 @@ async def run_index():
     doc_count = await get_document_count()
 
     logger.info(
-        f"Index run complete → indexed={total_indexed} errors={total_errors} total_docs={doc_count}"
+        f"Index run complete | indexed={total_indexed} errors={total_errors} total_docs={doc_count}"
     )
 
     return {
@@ -236,7 +236,7 @@ async def index_channel(channel_id: str, channel_name: str):
                         user = await get_user_info(msg["user"])
 
                         if user:
-                            user_name = user.get("realName") or user.get("name")
+                            user_name = user.real_name or user.name
 
                     doc_id = f"{channel_id}:{msg['ts']}"
 
@@ -317,7 +317,7 @@ async def index_single_message(message: Dict[str, Any], channel_id: str, channel
         if message.get("user"):
             user = await get_user_info(message["user"])
             if user:
-                user_name = user.get("realName") or user.get("name")
+                user_name = user.real_name or user.name
 
         metadata = {
             "channelId": channel_id,

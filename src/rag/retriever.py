@@ -76,20 +76,20 @@ async def retrieve(query: str, options: RetrievalOptions = RetrievalOptions()) -
         user_id=options.user_id,
     )
 
-    filtered = [r for r in search_results if r["score"] >= options.min_score]
+    filtered = [r for r in search_results if r.score >= options.min_score]
 
     retrieved_docs: List[RetrievedDocument] = []
 
     for result in filtered[: options.limit]:
 
         doc = RetrievedDocument(
-            text=result["text"],
-            score=result["score"],
-            channel_name=result["metadata"]["channelName"],
-            user_name=result["metadata"]["userName"],
-            timestamp=result["metadata"]["timestamp"],
-            message_id=result["metadata"]["messageTs"],
-            is_thread=result["metadata"].get("isThread", False),
+            text=result.text,
+            score=result.score,
+            channel_name=result.metadata.channelName,
+            user_name=result.metadata.userName,
+            timestamp=result.metadata.timestamp,
+            message_id=result.metadata.messageTs,
+            is_thread=result.metadata.isThread or False,
             formatted=format_for_llm(result),
         )
 
@@ -111,17 +111,17 @@ async def retrieve(query: str, options: RetrievalOptions = RetrievalOptions()) -
 # Format Result For LLM
 # ---------------------------------------------------------
 
-def format_for_llm(result: Dict) -> str:
+def format_for_llm(result) -> str:
 
-    ts = result["metadata"]["timestamp"]
+    ts = result.metadata.timestamp
 
     date = ts[:10]
 
-    thread_indicator = " (thread reply)" if result["metadata"].get("isThread") else ""
+    thread_indicator = " (thread reply)" if result.metadata.isThread else ""
 
     return (
-        f"[{date} in #{result['metadata']['channelName']}{thread_indicator}] "
-        f"{result['metadata']['userName']}: {result['text']}"
+        f"[{date} in #{result.metadata.channelName}{thread_indicator}] "
+        f"{result.metadata.userName}: {result.text}"
     )
 
 
