@@ -1,5 +1,5 @@
 import os
-import google.generativeai as genai
+from google import genai
 
 from src.llm.base_provider import BaseLLMProvider
 
@@ -13,17 +13,18 @@ class GeminiProvider(BaseLLMProvider):
         if not api_key:
             raise RuntimeError("GEMINI_API_KEY missing")
 
-        genai.configure(api_key=api_key)
+        self.client = genai.Client(api_key=api_key)
 
-        self.model = genai.GenerativeModel(
-            os.getenv("MODEL_NAME", "gemini-1.5-pro")
-        )
+        self.model = os.getenv("MODEL_NAME", "gemini-1.5-pro")
 
     async def chat(self, messages, tools=None):
 
         prompt = "\n".join([m["content"] for m in messages if m.get("content")])
 
-        response = await self.model.generate_content_async(prompt)
+        response = await self.client.aio.models.generate_content(
+            model=self.model,
+            contents=prompt,
+        )
 
         return {
             "message": {

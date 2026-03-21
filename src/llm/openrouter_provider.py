@@ -20,7 +20,10 @@ class OpenRouterProvider(BaseLLMProvider):
 
         self.model = os.getenv(
             "MODEL_NAME",
-            "meta-llama/llama-3.1-8b-instruct",
+            os.getenv(
+                "DEFAULT_MODEL",
+                "meta-llama/llama-3.1-8b-instruct",
+            ),
         )
 
     async def chat(self, messages, tools=None):
@@ -33,10 +36,25 @@ class OpenRouterProvider(BaseLLMProvider):
 
         msg = response.choices[0].message
 
+        tool_calls = []
+
+        if msg.tool_calls:
+
+            for call in msg.tool_calls:
+
+                tool_calls.append(
+                    {
+                        "id": call.id,
+                        "name": call.function.name,
+                        "arguments": call.function.arguments,
+                    }
+                )
+
         return {
             "message": {
                 "role": "assistant",
                 "content": msg.content,
+                "tool_calls": tool_calls,
             },
-            "tool_calls": [],
+            "tool_calls": tool_calls,
         }

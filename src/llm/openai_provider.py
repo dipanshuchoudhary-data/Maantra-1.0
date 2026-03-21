@@ -46,6 +46,7 @@ class OpenAIProvider(BaseLLMProvider):
             "message": {
                 "role": "assistant",
                 "content": msg.content,
+                "tool_calls": tool_calls,
             },
             "tool_calls": tool_calls,
         }
