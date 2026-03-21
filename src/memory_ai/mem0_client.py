@@ -17,6 +17,7 @@ Personalized responses
 """
 
 import os
+import inspect
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
@@ -88,6 +89,14 @@ async def initialize_memory():
         is_initialized = False
 
 
+async def _resolve_maybe_awaitable(value):
+
+    if inspect.isawaitable(value):
+        return await value
+
+    return value
+
+
 # -------------------------------------------------------
 # Add Memory
 # -------------------------------------------------------
@@ -109,7 +118,7 @@ async def add_memory(
 
     try:
 
-        result = await memory_client.add(
+        result = memory_client.add(
             messages,
             user_id=user_id,
             metadata={
@@ -117,6 +126,7 @@ async def add_memory(
                 **(metadata or {}),
             },
         )
+        result = await _resolve_maybe_awaitable(result)
 
         memories = result.get("results", [])
 
@@ -162,11 +172,20 @@ async def search_memory(
 
     try:
 
-        result = await memory_client.search(
-            query,
-            user_id=user_id,
-            limit=limit,
-        )
+        try:
+            result = memory_client.search(
+                query,
+                user_id=user_id,
+                limit=limit,
+                filters={"user_id": user_id},
+            )
+        except TypeError:
+            result = memory_client.search(
+                query,
+                user_id=user_id,
+                limit=limit,
+            )
+        result = await _resolve_maybe_awaitable(result)
 
         memories = result.get("results", [])
 
@@ -204,7 +223,8 @@ async def get_all_memories(user_id: str) -> List[MemoryItem]:
 
     try:
 
-        result = await memory_client.get_all(user_id=user_id)
+        result = memory_client.get_all(user_id=user_id)
+        result = await _resolve_maybe_awaitable(result)
 
         memories = result.get("results", [])
 
@@ -236,7 +256,8 @@ async def delete_memory(memory_id: str) -> bool:
 
     try:
 
-        await memory_client.delete(memory_id)
+        result = memory_client.delete(memory_id)
+        await _resolve_maybe_awaitable(result)
 
         logger.info(f"Deleted memory {memory_id}")
 
@@ -260,7 +281,8 @@ async def delete_all_memories(user_id: str) -> bool:
 
     try:
 
-        await memory_client.delete_all(user_id=user_id)
+        result = memory_client.delete_all(user_id=user_id)
+        await _resolve_maybe_awaitable(result)
 
         logger.info(f"Deleted all memories for {user_id}")
 

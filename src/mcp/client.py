@@ -11,6 +11,7 @@ Responsible for:
 
 import asyncio
 import json
+import os
 from typing import Dict, Any, List, Optional
 from dataclasses import dataclass, field
 
@@ -38,7 +39,7 @@ class MCPServer:
     tools: List[MCPTool] = field(default_factory=list)
     request_id: int = 0
     pending_requests: Dict[int, asyncio.Future] = field(default_factory=dict)
-    buffer: str = ""
+    buffer: bytes = b""
 
 
 # ---------------------------------------------------------
@@ -86,15 +87,14 @@ async def connect_server(config):
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        env={**config.env},
+        # Preserve PATH and system environment so commands like npx resolve on Windows.
+        env={**os.environ, **(config.env or {})},
     )
 
     server = MCPServer(
         name=config.name,
         process=process,
     )
-
-    servers[config.name] = server
 
     asyncio.create_task(read_stdout(server))
     asyncio.create_task(read_stderr(server))
@@ -131,7 +131,81 @@ async def connect_server(config):
         for t in tools
     ]
 
+    servers[config.name] = server
+
     logger.info(f"{config.name} connected with {len(server.tools)} tools")
+
+
+def _drain_stdout_messages(server: MCPServer) -> List[Dict[str, Any]]:
+
+    messages: List[Dict[str, Any]] = []
+
+    while True:
+
+        # Skip protocol separators between framed messages
+        while server.buffer.startswith((b"\r", b"\n")):
+            server.buffer = server.buffer[1:]
+
+        if not server.buffer:
+            break
+
+        header_end = server.buffer.find(b"\r\n\r\n")
+        delimiter_size = 4
+
+        if header_end < 0:
+            header_end = server.buffer.find(b"\n\n")
+            delimiter_size = 2
+
+        if header_end >= 0:
+
+            headers_raw = server.buffer[:header_end]
+
+            content_length = None
+
+            try:
+                for line in headers_raw.decode("ascii", errors="ignore").splitlines():
+                    if line.lower().startswith("content-length:"):
+                        content_length = int(line.split(":", 1)[1].strip())
+                        break
+            except Exception:
+                content_length = None
+
+            if content_length is not None:
+
+                body_start = header_end + delimiter_size
+                body_end = body_start + content_length
+
+                if len(server.buffer) < body_end:
+                    break
+
+                body = server.buffer[body_start:body_end]
+                server.buffer = server.buffer[body_end:]
+
+                try:
+                    messages.append(json.loads(body.decode("utf-8")))
+                except Exception:
+                    logger.debug(f"[{server.name}] Invalid framed JSON message")
+
+                continue
+
+        # Fallback: newline-delimited JSON
+        newline_index = server.buffer.find(b"\n")
+
+        if newline_index < 0:
+            break
+
+        raw_line = server.buffer[:newline_index].strip()
+        server.buffer = server.buffer[newline_index + 1:]
+
+        if not raw_line:
+            continue
+
+        try:
+            messages.append(json.loads(raw_line.decode("utf-8")))
+        except Exception:
+            logger.debug(f"[{server.name}] Non JSON output: {raw_line[:200]!r}")
+
+    return messages
 
 
 # ---------------------------------------------------------
@@ -142,19 +216,14 @@ async def read_stdout(server: MCPServer):
 
     while True:
 
-        data = await server.process.stdout.readline()
+        data = await server.process.stdout.read(4096)
 
         if not data:
             break
 
-        line = data.decode().strip()
+        server.buffer += data
 
-        if not line:
-            continue
-
-        try:
-
-            message = json.loads(line)
+        for message in _drain_stdout_messages(server):
 
             if "id" in message:
 
@@ -166,13 +235,10 @@ async def read_stdout(server: MCPServer):
 
                     if "error" in message:
                         future.set_exception(
-                            RuntimeError(message["error"]["message"])
+                            RuntimeError(message["error"].get("message", "MCP error"))
                         )
                     else:
                         future.set_result(message.get("result"))
-
-        except Exception:
-            logger.debug(f"[{server.name}] Non JSON output: {line}")
 
 
 async def read_stderr(server: MCPServer):
