@@ -51,6 +51,24 @@ logger = get_logger("main")
 shutdown_event = asyncio.Event()
 
 
+def _is_placeholder_openai_key(api_key: str | None) -> bool:
+
+    if not api_key:
+        return True
+
+    lowered = api_key.strip().lower()
+
+    # Common placeholder/test values seen in local .env files
+    placeholders = [
+        "sk-xxxxxxxx",
+        "your_openai_api_key",
+        "replace_me",
+        "changeme",
+    ]
+
+    return any(token in lowered for token in placeholders)
+
+
 # =========================================================
 # Main Startup
 # =========================================================
@@ -77,17 +95,24 @@ async def main():
 
         if config.rag.enabled:
 
-            logger.info("Initializing RAG system...")
+            # RAG embeddings require a working OpenAI key in this codebase.
+            if _is_placeholder_openai_key(config.ai.openai_api_key):
+                logger.warning(
+                    "RAG disabled at startup because OPENAI_API_KEY is missing/placeholder"
+                )
+            else:
 
-            await initialize_vector_store()
+                logger.info("Initializing RAG system...")
 
-            doc_count = await get_document_count()
+                await initialize_vector_store()
 
-            logger.info(f"Vector store initialized ({doc_count} documents)")
+                doc_count = await get_document_count()
 
-            await start_indexer()
+                logger.info(f"Vector store initialized ({doc_count} documents)")
 
-            logger.info("Background indexer started")
+                await start_indexer()
+
+                logger.info("Background indexer started")
 
         else:
 
@@ -146,8 +171,7 @@ async def main():
 
         logger.info("Starting Slack app...")
 
-        # Run Slack bot as background task
-        asyncio.create_task(start_slack_app())
+        await start_slack_app()
 
         logger.info("Slack bot running")
 
@@ -185,7 +209,7 @@ async def shutdown():
 
         if config.rag.enabled:
             logger.info("Stopping indexer...")
-            stop_indexer()
+            await stop_indexer()
 
         logger.info("Stopping scheduler...")
         task_scheduler.stop()

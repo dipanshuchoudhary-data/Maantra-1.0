@@ -100,6 +100,7 @@ class Settings(BaseModel):
     memory_enabled: bool
 
     slack_bot_token: str
+    slack_app_token: Optional[str] = None
     slack_signing_secret: Optional[str] = None
     slack_port: int = 3000
 
@@ -207,6 +208,7 @@ def load_settings() -> Settings:
         rag_enabled=rag.enabled,
         memory_enabled=memory.enabled,
         slack_bot_token=slack.bot_token,
+        slack_app_token=slack.app_token,
         slack_signing_secret=slack.signing_secret,
         dm_policy=security.dm_policy,
     )
