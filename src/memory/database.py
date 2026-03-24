@@ -138,6 +138,41 @@ def get_or_create_session(user_id: str, channel_id: Optional[str], thread_ts: Op
     }
 
 
+def get_session_metadata(session_id: str) -> Dict[str, Any]:
+
+    row = db.execute(
+        "SELECT metadata FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+
+    if not row:
+        return {}
+
+    raw = row["metadata"]
+
+    if not raw:
+        return {}
+
+    try:
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def update_session_metadata(session_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+
+    current = get_session_metadata(session_id)
+    merged = {**current, **updates}
+
+    db.execute(
+        "UPDATE sessions SET metadata = ?, last_activity = ? WHERE id = ?",
+        (json.dumps(merged), int(time.time()), session_id),
+    )
+    db.commit()
+
+    return merged
+
+
 # ---------------------------------------------------------
 # Message history
 # ---------------------------------------------------------
