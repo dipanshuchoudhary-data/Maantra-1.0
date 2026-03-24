@@ -38,6 +38,8 @@ from .embeddings import (
     cosine_similarity,
     preprocess_text,
     get_embedding_config,
+    initialize_embedding_provider,
+    is_embedding_provider_ready,
 )
 
 # =========================================================
@@ -99,6 +101,8 @@ __all__ = [
     "cosine_similarity",
     "preprocess_text",
     "get_embedding_config",
+    "initialize_embedding_provider",
+    "is_embedding_provider_ready",
 
     # vector store
     "initialize_vector_store",
