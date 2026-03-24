@@ -21,12 +21,15 @@ from src.utils.logger import get_logger
 
 from src.memory.database import (
     get_or_create_session,
+    get_session_metadata,
+    update_session_metadata,
     is_user_approved,
     generate_pairing_code,
     approve_pairing,
 )
 
 from src.agents.agent import Agent, AgentContext, summarize_thread
+from src.llm.provider_factory import get_available_providers
 from src.tools.scheduler import task_scheduler
 
 logger = get_logger("slack")
@@ -78,6 +81,17 @@ def remove_bot_mention(text: str, bot_id: str) -> str:
 
 def is_direct_message(channel_id: str) -> bool:
     return channel_id.startswith("D")
+
+
+def _normalize_model_name(raw_text: str) -> str:
+
+    model = raw_text.strip().strip("'\"")
+
+    # Support syntax like: set model = gpt-4o-mini
+    if model.startswith("="):
+        model = model[1:].strip()
+
+    return model
 
 
 async def get_user_info(user_id: str):
@@ -206,11 +220,112 @@ Maantra Assistant
 Commands:
 • help
 • summarize
+• llm options
+• llm show
+• set provider [openai|openrouter|gemini|grok]
+• set model [model-id]
 • remind me
 • my tasks
 • cancel task [id]
 • /reset
 """
+        )
+
+        return
+
+    command_text = clean_text.strip()
+    command_lower = command_text.lower()
+
+    if command_lower in {"llm options", "provider options", "model options"}:
+
+        providers = get_available_providers()
+        providers_text = ", ".join(providers) if providers else "none configured"
+
+        await say(
+            text=(
+                "LLM selection options\n\n"
+                f"Configured providers: {providers_text}\n"
+                "Use:\n"
+                "• set provider openrouter\n"
+                "• set provider openai\n"
+                "• set provider gemini\n"
+                "• set provider grok\n"
+                "• set model your-model-id\n"
+                "• llm show"
+            ),
+            thread_ts=thread_ts or ts,
+        )
+
+        return
+
+    if command_lower == "llm show":
+
+        session = get_or_create_session(user, channel, thread_ts)
+        metadata = get_session_metadata(session["id"])
+
+        selected_provider = metadata.get("llm_provider", "default")
+        selected_model = metadata.get("llm_model", "default")
+
+        await say(
+            text=(
+                "Current LLM settings\n\n"
+                f"Provider: {selected_provider}\n"
+                f"Model: {selected_model}"
+            ),
+            thread_ts=thread_ts or ts,
+        )
+
+        return
+
+    if command_lower.startswith("set provider "):
+
+        requested_provider = command_text[len("set provider "):].strip().lower()
+        available = get_available_providers()
+
+        if requested_provider not in {"openai", "openrouter", "gemini", "grok"}:
+            await say(
+                text="Invalid provider. Use one of: openai, openrouter, gemini, grok",
+                thread_ts=thread_ts or ts,
+            )
+            return
+
+        if requested_provider not in available:
+            await say(
+                text=(
+                    f"Provider '{requested_provider}' is not configured in environment. "
+                    f"Configured providers: {', '.join(available) if available else 'none'}"
+                ),
+                thread_ts=thread_ts or ts,
+            )
+            return
+
+        session = get_or_create_session(user, channel, thread_ts)
+        update_session_metadata(session["id"], {"llm_provider": requested_provider})
+
+        await say(
+            text=f"Provider set to {requested_provider}",
+            thread_ts=thread_ts or ts,
+        )
+
+        return
+
+    if command_lower.startswith("set model "):
+
+        requested_model = _normalize_model_name(command_text[len("set model "):])
+
+        if not requested_model:
+            await say(
+                text="Model name cannot be empty. Example: set model gpt-4o-mini",
+                thread_ts=thread_ts or ts,
+            )
+            return
+
+        session = get_or_create_session(user, channel, thread_ts)
+        update_session_metadata(session["id"], {"llm_model": requested_model})
+
+        await say(
+            text=f"Model set to {requested_model}",
+            thread_ts=thread_ts or ts,
         )
 
         return
@@ -271,6 +386,8 @@ Commands:
 
         session = get_or_create_session(user, channel, thread_ts)
 
+        session_metadata = get_session_metadata(session["id"])
+
         logger.info(f"STEP 3b: Got session id={session['id']}")
 
         logger.info(f"STEP 3c: Fetching user info for {user}")
@@ -290,6 +407,8 @@ Commands:
             thread_ts=thread_ts,
             user_name=user_info["real_name"],
             channel_name=channel_info["name"],
+            llm_provider=session_metadata.get("llm_provider"),
+            llm_model=session_metadata.get("llm_model"),
         )
 
         logger.info(f"STEP 3f: Created context | session_id={context.session_id}, user_name={context.user_name}")
