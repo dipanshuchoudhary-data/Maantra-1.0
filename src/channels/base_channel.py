@@ -2,7 +2,6 @@
 Base Channel Adapter - Abstract interface for all messaging platforms.
 """
 
-
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
@@ -48,17 +47,17 @@ class BaseChannelAdapter(ABC):
     max_message_length: int = 4096
 
     @abstractmethod
-    async def start(self) -&gt; None:
+    async def start(self) -> None:
         """Start listening for events"""
         pass
 
     @abstractmethod
-    async def stop(self) -&gt; None:
+    async def stop(self) -> None:
         """Stop listening and cleanup"""
         pass
 
     @abstractmethod
-    async def normalize_event(self, raw_event: Any) -&gt; Optional[PlatformMessage]:
+    async def normalize_event(self, raw_event: Any) -> Optional[PlatformMessage]:
         """Convert platform event to normalized PlatformMessage"""
         pass
 
@@ -67,12 +66,12 @@ class BaseChannelAdapter(ABC):
         self,
         response: PlatformResponse,
         context: Dict[str, Any]
-    ) -&gt; bool:
+    ) -> bool:
         """Send response back to user. Returns True if successful."""
         pass
 
     @abstractmethod
-    async def get_user_info(self, platform_user_id: str) -&gt; Dict[str, Any]:
+    async def get_user_info(self, platform_user_id: str) -> Dict[str, Any]:
         """Get user metadata from platform"""
         pass
 
@@ -81,7 +80,7 @@ class BaseChannelAdapter(ABC):
         self,
         conversation_id: str,
         limit: int = 50
-    ) -&gt; List[PlatformMessage]:
+    ) -> List[PlatformMessage]:
         """Get recent messages from conversation"""
         pass
 
@@ -90,7 +89,7 @@ class BaseChannelAdapter(ABC):
         user_id: str,
         conversation_id: str,
         reply_to_id: Optional[str] = None
-    ) -&gt; str:
+    ) -> str:
         """Create unified session ID with platform prefix"""
         if reply_to_id:
             return f"thread:{self.platform_name}:{conversation_id}:{reply_to_id}"
