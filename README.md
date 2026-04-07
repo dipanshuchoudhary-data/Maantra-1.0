@@ -381,6 +381,7 @@ Slack AI Assistant v2 is ready
 ---
 
 ## 🔌 Platform Setup Guides
+## You can follow complete setup guide : https://maantrasetup.netlify.app/
 
 ## Slack (Production-Ready)
 
