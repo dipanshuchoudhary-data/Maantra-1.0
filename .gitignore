@@ -125,3 +125,6 @@ credentials.json
 # =========================
 *.bak
 *.tmp
+
+
+docs
