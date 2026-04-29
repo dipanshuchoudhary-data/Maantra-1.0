@@ -2,6 +2,7 @@
 Slack message formatting helpers.
 """
 
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
@@ -103,7 +104,7 @@ def task_list_message(tasks: List[Dict[str, Any]]) -> Dict[str, Any]:
         task_id = task.get("id")
         description = task.get("task_description") or "Untitled task"
         status = task.get("status") or "pending"
-        when = task.get("scheduled_time") or task.get("cron_expression") or "unscheduled"
+        when = _format_task_when(task)
         lines.append(f"- `#{task_id}` {description} ({status}, {when})")
 
     return SlackFormatter.build_message(
@@ -120,6 +121,52 @@ def task_cancel_message(task_id: int, cancelled: bool) -> Dict[str, Any]:
         text = f"Task `#{task_id}` was not found or is no longer pending."
 
     return SlackFormatter.build_message(text, title="Tasks")
+
+
+def reminder_created_message(
+    *,
+    task_id: int,
+    description: str,
+    scheduled_time: Optional[datetime],
+    cron_expression: Optional[str],
+) -> Dict[str, Any]:
+    if cron_expression:
+        timing = f"Recurring schedule: `{cron_expression}`"
+    elif scheduled_time:
+        timing = f"Scheduled for: `{scheduled_time.strftime('%Y-%m-%d %H:%M')}`"
+    else:
+        timing = "Scheduled"
+
+    text = f"Created reminder `#{task_id}`\n- {description}\n- {timing}"
+    return SlackFormatter.build_message(text, title="Reminder")
+
+
+def reminder_parse_error_message() -> Dict[str, Any]:
+    return SlackFormatter.build_message(
+        (
+            "Could not parse reminder command.\n\n"
+            "Examples:\n"
+            "- `remind me to submit report in 2 hours`\n"
+            "- `remind me standup update every weekday`\n"
+            "- `remind me deploy check at 5pm`\n"
+            "- `remind me status update tomorrow 9:30am`"
+        ),
+        title="Reminder",
+    )
+
+
+def _format_task_when(task: Dict[str, Any]) -> str:
+    scheduled_time = task.get("scheduled_time")
+    cron_expression = task.get("cron_expression")
+    if scheduled_time:
+        try:
+            dt = datetime.fromtimestamp(int(scheduled_time))
+            return dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            return str(scheduled_time)
+    if cron_expression:
+        return str(cron_expression)
+    return "unscheduled"
 
 
 def channel_stats_message(stats: Dict[str, Any]) -> Dict[str, Any]:
@@ -151,6 +198,8 @@ def help_message() -> Dict[str, Any]:
             "- `set provider openai|openrouter|gemini|grok`\n"
             "- `set model model-id`\n"
             "- `remind me ...`\n"
+            "- `remind me ... at 5pm`\n"
+            "- `remind me ... tomorrow 9am`\n"
             "- `my tasks`\n"
             "- `cancel task task-id`\n\n"
             "*Channel*\n"
